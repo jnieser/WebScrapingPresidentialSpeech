@@ -1,0 +1,420 @@
+---
+title: "ps3"
+author: "Jiayang Nie"
+date: "9/26/2021"
+output: pdf_document
+---
+
+```{r}
+library(rvest)
+library(stringr)
+library(ggplot2)
+```
+
+
+
+# Problem 1
+
+## Extracting URLs
+
+```{r}
+extracting_url <- function() {
+  URL <- paste0("https://www.presidency.ucsb.edu",
+                '/documents/presidential-documents-archive-guidebook',
+                '/annual-messages-congress-the-state-the-union#axzz265cEKp1a')
+  speechesUrls <- URL %>% read_html() %>%
+    html_elements(xpath = ".//td[@style='text-align: center; height: 16px;']//a") %>%
+    html_attr("href")
+  # Get unique and non-NA and non-meaningful speeches urls
+  uniqueSpeechesUrls = unique(speechesUrls[!is.na(speechesUrls)])
+  finalUrls = uniqueSpeechesUrls[uniqueSpeechesUrls != "#nixon1973"]
+  # Total length of urls extracted is 241
+  return(finalUrls)
+}
+finalUrls <- extracting_url()
+length(finalUrls)
+```
+
+## Extract non-President words and count
+
+```{r}
+# Function that return the body speech that is cleaned given an url
+extract_body <- function(url) {
+  # The part of p/text()[not(self::i and self::em)] is inspired by Ophelia Wang
+  # Strip off non-president words
+  pres_words <- url %>% read_html() %>% 
+    html_elements(xpath = ".//div[@ class='field-docs-content']//p/text()[not(self::i and self::em)]") %>%
+    html_text()
+  # Merge lists of sentences into one paragraph
+  # Delete the '[', ']' left
+  merged_words <- paste(pres_words, collapse = '')
+  cleaned_words <- str_replace_all(merged_words, "[\\[\\]]", "")
+  return(cleaned_words)
+}
+
+# Count number of laughters and applauses
+lau_app_count <- function(url) {
+  non_words_i <- url %>% read_html() %>% 
+    html_elements(xpath = ".//div[@ class='field-docs-content']//p/i") %>%
+    html_text()
+  non_words_em <- url %>% read_html() %>% 
+    html_elements(xpath = ".//div[@ class='field-docs-content']//p/em") %>%
+    html_text()
+  cnt_laughter <- sum(non_words_i == "Laughter" 
+                                 | non_words_i == "laughter") 
+  + sum(non_words_em == "Laughter" 
+                                 | non_words_em == "laughter")
+  
+  cnt_applause <- sum(non_words_em == "Applause"
+                                 | non_words_em == "applause") 
+  + sum(non_words_i == "Applause"
+                                 | non_words_i == "applause")
+  return(c(cnt_laughter, cnt_applause))
+  
+}
+
+# Extract the name of the president who gave the speech
+pres_name <- function(url) {
+  name = url %>% read_html() %>% 
+    html_elements(xpath = ".//div[@class='field-title']//h3") %>%
+    html_text()
+  return(name)
+}
+```
+
+## Getting Year and Body of Speech
+
+
+```{r}
+# Input a url
+# Output a vector of year speacker and body of speech,
+# number of laughter, number of applause of a speech
+getting_body_and_year <- function(url) {
+    date <- url %>% read_html() %>% 
+      html_elements(xpath = ".//div[@ class='field-docs-start-date-time']//span") %>%
+      html_text()
+    year <- substr(date, nchar(date)-3, nchar(date))
+    name <- pres_name(url)
+    body <- extract_body(url)
+    cnt <- lau_app_count(url)
+    cntLaugh <- cnt[1]
+    cntApplause <- cnt[2]
+  return(c(year, name, body, cntLaugh, cntApplause))
+}
+
+# Test the first five speeches
+testBodyYear <- lapply(finalUrls[1:5], getting_body_and_year)
+# Year
+testBodyYear[[1]][1]
+# Speaker
+testBodyYear[[1]][2]
+# Body
+substr(testBodyYear[[1]][3], 1, 80)
+# Cnts of Laughters
+testBodyYear[[1]][4]
+# Cnts of Applauses
+testBodyYear[[1]][5]
+```
+
+## Vectorize sentences and words
+
+```{r}
+# Input string of speech body
+# Output two vectors: sentence vectors, and word vectors
+vectorize_body <- function(body) {
+  bodyClean <- str_replace_all(body, "\n", "")
+  # Split character into vectors of sentences splitted by punctuation and white space
+  # Inspired from https://stackoverflow.com/questions/
+  # 46884556/split-character-vector-into-sentences/46885094
+  sentenceVec <- str_split(body, regex("(?<=[[:punct:]])\\s(?=[A-Z])"))
+  # Get rid of punctuations
+  bodyClean <- str_replace_all(body, regex("[[:punct:]]"), "")
+  wordVec <- str_split(bodyClean, " ")
+  return(c(as.vector(sentenceVec), as.vector(wordVec)))
+}
+testVec = vectorize_body(testBodyYear[[1]][3])
+# Sentece Vectors
+testVec[[1]][1:10]
+# Word Vectors
+testVec[[2]][1:10]
+```
+
+## Count words and sentences
+
+```{r}
+# input list of wordVectors and sentenceVectors
+# output a number of words, number of characters and mean word length
+cnt_words <- function(lis) {
+    wordVec = lis[2]
+    cntWord = length(wordVec[[1]])
+    avgLength = mean(lapply(wordVec, nchar)[[1]], na.rm = TRUE)
+    cntChar = sum(nchar(wordVec[[1]]))
+    return(c(cntWord, avgLength, cntChar))
+}
+# Test to see the output of cnt_words
+cnt_words(testVec)
+```
+
+```{r}
+helper_cnt <- function(word, body) {
+  reg = paste0('\\s','(', word, '[[:punct:]]?', ')','\\s')
+  return(str_count(body, regex(reg)))
+}
+
+special_cnt <- function(body) {
+  names <- c('I', 'we', 'America[n]?', 'democra(cy)?(tic)?',
+             'republic', 'Democrat(ic)?', 'Republican', 
+             'free(dom)?', 'war', '(God)\\s(?!(bless))', 
+             'God bless', '(Jesus)|(Christ)|(Christian)',
+             "China", "technology", "crisis", "wom(an)?(en)?")
+  freq <- rep(0, length(names))
+  for (i in 1:length(names)) {
+    if (names[i] == '(God)\\s(?!(bless))' 
+        | names[i] == 'God bless') {
+      freq[i] = str_count(body, names[i])
+    }
+    else {
+    freq[i] = helper_cnt(names[i], body)
+    }
+  }
+  df = data.frame(names, freq)
+  return(df)
+}
+# Test the first speech by Joe Biden
+body = testBodyYear[[1]][3]
+special_cnt(body)
+```
+
+## The Integration
+
+Here I integrate all the above modular functions together
+
+```{r}
+# Parameter: test=TRUE when only consider the first 5 cases
+#            concise=TRUE when not returning the list of body speeches as it is too big
+#            afterRos=TRUE when only considering speeches after Roosevelt
+# Output: 1st element is a index of years
+#         2nd element is a list of bodeis
+#         3rd element is a n by 2 matrix of wordVecs and sentenceVecs
+#         4th element is a n by 3 matrix of 
+#counts of number of words, numebr of sentences, and average word length
+speech_info <- function(test=FALSE, concise=FALSE, afterRos=FALSE) {
+  finalUrls <- extracting_url()
+  # For efficient tests
+  if (test) {
+    finalUrls = finalUrls[1:5]
+  }
+  if (afterRos) {
+    finalUrls = finalUrls[1:97]
+  }
+  bodyYear <- lapply(finalUrls, getting_body_and_year) 
+  # Get all the years as index
+  index = lapply(bodyYear, `[[`, 1)
+  names = lapply(bodyYear, `[[`, 2)
+  bodies = lapply(bodyYear, `[[`, 3)
+  vectors = lapply(bodies, vectorize_body)
+  cnts = lapply(vectors, cnt_words)
+  specialCnts = lapply(bodies, special_cnt)
+  if (concise) {
+    return(list("index" = index, "names" = names, "vectors" = vectors, 
+                "cnts" = cnts, "specialCnts" = specialCnts))
+  } else {
+  return(list("index" = index, "names" = names, "bodies" = bodies, 
+              "vectors" = vectors, "cnts" = cnts, "specialCnts" = specialCnts))
+  }
+}
+# Test the general funtion
+test = speech_info(test=TRUE)
+test$index
+test$names
+test$cnts[1]
+test$specialCnts[1]
+```
+
+## Plot difference between Rep and Dem
+
+```{r}
+# Extract all speeches after Rossevolt
+fullSpeeches = speech_info(concise = TRUE, afterRos = TRUE)
+```
+
+```{r}
+special_word_helper <- function(df, key) {
+  return(df$freq[df$name==key])
+}
+avgWordLen = lapply(fullSpeeches$cnts, `[[`, 2)
+speechSize = lapply(fullSpeeches$cnts, `[[`, 1)
+americaFreq = lapply(fullSpeeches$specialCnts, special_word_helper, "America[n]?")
+speechInfoByYear <- data.frame("index" = as.numeric(fullSpeeches$index), 
+                               "avgWordLen" = as.numeric(avgWordLen),
+                               "speechSize" = as.numeric(speechSize),
+                               "AmericaFreq" = as.numeric(americaFreq))
+
+head(speechInfoByYear)
+```
+
+```{r}
+plot(speechInfoByYear$index, 
+     speechInfoByYear$avgWordLen, pch=16, cex=.5, 
+     xlab = "Year", ylab = "avergae word length", 
+     main = "Average Word Length Change over Time")
+```
+Clearly, average word length decreases as year goes indicating presidents tend to use simple words in modern times.
+```{r}
+plot(speechInfoByYear$index, speechInfoByYear$speechSize, 
+     pch=16, cex=.5, xlab = "Year", 
+     ylab = "Number of Words", 
+     main = "Number of Words Change over Time")
+```
+Speech length roughly remains unchanged except for multiple super long speeches in 1970s and 1940s, probably about WWII and the Cold War.
+```{r}
+plot(speechInfoByYear$index,
+     speechInfoByYear$AmericaFreq/speechInfoByYear$speechSize, 
+     pch=16, cex=.5, xlab = "Year", 
+     ylab = "Number of American", 
+     main = "Number of American mentioned per word Change over Time")
+```
+Number of America{,n} being mentioned shows a steady increasing trend, indicating probably presidents in modern time are more likely to use nationalism of America in their speeches.
+```{r}
+dem.presidents = c("Joseph R. Biden", "Barack Obama", 
+                   "William J. Clinton", "Jimmy Carter", 
+                   "Lyndon B. Johnson", "John F. Kennedy",
+                   "Harry S. Truman", "Franklin D. Roosevelt")
+# Get democratic presidents' speeches
+dem = sapply(fullSpeeches, `[`, fullSpeeches$names %in% dem.presidents)
+# Get republican presidents' speeches
+rep = sapply(fullSpeeches, `[`, !fullSpeeches$names %in% dem.presidents)
+```
+
+```{r}
+# Input dataframe and party
+# Output dataframe of useful informations
+speech_by_party <- function(df, party){
+  year = as.numeric(df[,1])
+  avgWordLen = as.numeric(lapply(df[,4], `[[`, 2))
+  speechSize = as.numeric(lapply(df[,4], `[[`, 1))
+  americaFreq = as.numeric(lapply(df[,5], 
+                                  special_word_helper, "America[n]?"))
+  warFreq = as.numeric(lapply(df[,5], 
+                              special_word_helper, "war"))
+  crisisFreq = as.numeric(lapply(df[,5], 
+                                 special_word_helper, "crisis"))
+  womanFreq = as.numeric(lapply(df[,5], 
+                                special_word_helper, "wom(an)?(en)?"))
+  indicator = rep(party, length(avgWordLen))
+  return(data.frame("year" = year, "avgWordLen" = avgWordLen,
+                    "speechSize" = speechSize, "americanFreq" = americaFreq, 
+                    "crisisFreq" = crisisFreq, "womanFreq" = womanFreq,
+                    "warFreq" = warFreq, "Party" = indicator))
+}
+```
+
+```{r}
+df.dem = speech_by_party(dem, "Democratic")
+df.rep = speech_by_party(rep, "Republican")
+
+speechByParty <- rbind(df.dem, df.rep)
+
+# There isn't a significant difference in average word length between Dem. and Rep.
+ggplot(speechByParty)+geom_histogram(aes(x=avgWordLen,y=..density..,fill=Party)) +
+  ggtitle("Average Word Length for Dem and Rep speakers")
+
+# Democratics are more likely to have longer speeches
+ggplot(speechByParty)+geom_histogram(aes(x=speechSize,y=..density..,fill=Party)) +
+  ggtitle("Speech Length for Dem and Rep speakers")
+
+# Democratics are more likely to mention wars
+ggplot(speechByParty)+geom_histogram(aes(x=warFreq/speechSize,y=..density..,fill=Party)) +
+  ggtitle("'War' mentioned Frequency for Dem and Rep speakers")
+```
+If I have more time, I would do extensive data analysis by tokenize each word and do some NLP modeling to predict the popularity of the president. Also, I will separate presidents into three time periods: During and before WWII, cold war, and modern time. The popularity will be retrived by the general election percentage of such president. In such way, we could see which word will have a greater impact on presidents' popularity over time.
+
+If without NLP, I will get to look for some interesting words that differ the most bewtween Democratic and Republicans through comparing plots of the frequency over total word sizes of those words.
+
+## Extra Credit
+
+In this part, I will try to plot two trends: one for American crisis, one for the rise of femisim.
+
+The first plot will count the number of 'crisis' mentioned in the speech over time, and the second plot will count the number of 'women' or 'woman' mentioned in a speech over time. Here, I will not do the count per word because the speech length for each president is quite similar.
+```{r}
+ggplot(speechByParty)+geom_point(aes(x=year, y=crisisFreq, shape=Party)) +
+  ggtitle("'Crisis' mentioned Frequency") + theme_minimal()
+
+ggplot(speechByParty)+geom_point(aes(x=year, y=womanFreq, shape=Party)) +
+  ggtitle("'Woman' mentioned Frequency") + theme_minimal()
+```
+
+We can see an increasing trend in the latter of the two plots. The rise of feminism is quite clear, indicating the progess of feminism over years.
+
+On the other hand, we can see that during the cold war and in the recent decade, the word 'crisis' is mentioned a lot in compare to other periods. This may indicate the anxiety of Americans are increasing over time.
+
+\newpage
+
+# Problem 2
+
+
+* speechClass: this class contains the information for one speech, all fields are private
+  + Integer speechYear
+  + Html html: the html contents from the url
+  + speechPresidentClass speechPresident: an object of speechPresidentClass
+  + String speechBody
+  + List wordVec: A vector of words in the speech
+  + List sentenceVec: A vector of sentences in the speech
+  + HashMap[String info, Integer value] basicInfo: containing information for the following items - {speechWordLength, avgWordLength, speechnChar, nApplause, nLaughter}
+  + HashMap[String word, Integer cnt] wordCnt: containing the count of "I", "America{,n}", etc.
+  + Method readHtml: read the url to html
+  + Method initialize(url): the method here takes in an url and initialize the speechClass by that url, the function will call speechPresidentClass's initilization by inputting the html. Detailed initialization will be similar to what I wrote in part 1.
+  + Method get_year(): return the year of speech
+  + Method get_president(): return speechPresidentClass Object of the president
+  + Method get_body(): return the speech body
+  + Method get_word_vec()
+  + Method get_sentence_vec()
+  + Method get_basic_info()
+  + Method get_word_cnt()
+  
+* speechPresidentClass: this class the information for one president
+  + String party
+  + String name
+  + List presidencyPeriod: the period of years for presidency
+  + boolean assisnated: whether the president was assasinated
+  + Double popularity: Election Voting Percentage
+  + Method initialze(html): initilze the speechPresidentClass Object by a html
+  
+* allSpeechesClass: this is the general class that contains all the information of all speeches
+  + Hashmap[president year, speechClass] speeches: a hashmap mapping the president and year of speech to the speechClass Object  
+  + Method initialze(): initilize to get the speeches hashmap, will call get_urls(), and the initialze function in speechClass
+  + Method get_urls(): get all the urls from the website
+  + Method get_democrat(): return the democrat speechClass objects
+  + Method get_republic(): return the republican speechClass objects
+  + Method plot_by_party(keyword): plot the difference of the value of the keyword between different parties
+
+\newpage
+
+# Problem 3
+
+## a
+
+q(save='no') will do.
+
+When I type k, first R will go find the object k and tries to print it. As my print function for k is the quiting function, that will quit R without asking.
+
+This is done by S3 class.
+
+```{r, eval=FALSE}
+k = 0
+class(k) <- 'custom_quit'
+print.custom_quit <- function(custom_quitObject) q(save='no')
+k
+```
+
+
+## b
+
+Basically, I am letting q to be in the same class as k such that the print function of q also quit R without asking.
+
+```{r, eval=FALSE}
+class(q) <- 'custom_quit'
+q
+```
+
+My q and R q() coexist because q() is inside the base:: environment. Here, I am repointing q in the global environment but it does not cover the base::q(). Furthermore, q() is a function call and R will go find the function q() instead of my customized q.
