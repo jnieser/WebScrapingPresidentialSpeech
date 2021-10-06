@@ -387,34 +387,3 @@ On the other hand, we can see that during the cold war and in the recent decade,
   + Method get_democrat(): return the democrat speechClass objects
   + Method get_republic(): return the republican speechClass objects
   + Method plot_by_party(keyword): plot the difference of the value of the keyword between different parties
-
-\newpage
-
-# Problem 3
-
-## a
-
-q(save='no') will do.
-
-When I type k, first R will go find the object k and tries to print it. As my print function for k is the quiting function, that will quit R without asking.
-
-This is done by S3 class.
-
-```{r, eval=FALSE}
-k = 0
-class(k) <- 'custom_quit'
-print.custom_quit <- function(custom_quitObject) q(save='no')
-k
-```
-
-
-## b
-
-Basically, I am letting q to be in the same class as k such that the print function of q also quit R without asking.
-
-```{r, eval=FALSE}
-class(q) <- 'custom_quit'
-q
-```
-
-My q and R q() coexist because q() is inside the base:: environment. Here, I am repointing q in the global environment but it does not cover the base::q(). Furthermore, q() is a function call and R will go find the function q() instead of my customized q.
